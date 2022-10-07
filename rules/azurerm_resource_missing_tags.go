@@ -4,7 +4,6 @@ package rules
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	hcl "github.com/hashicorp/hcl/v2"
@@ -12,6 +11,7 @@ import (
 	"github.com/terraform-linters/tflint-plugin-sdk/logger"
 	"github.com/terraform-linters/tflint-plugin-sdk/tflint"
 	"github.com/zclconf/go-cty/cty"
+	"golang.org/x/exp/maps"
 )
 
 // AzurermResourceMissingTagsRule checks whether resources are tagged correctly
@@ -76,12 +76,13 @@ func (r *AzurermResourceMissingTagsRule) Check(runner tflint.Runner) error {
 
 		for _, resource := range resources.Blocks {
 			if attribute, ok := resource.Body.Attributes[tagsAttributeName]; ok {
-				logger.Debug("Walk `%s` attribute", resource.Labels[0]+"."+resource.Labels[1]+"."+tagsAttributeName)
-				resourceTags := make(map[string]string)
-				wantType := cty.Map(cty.String)
-				err := runner.EvaluateExpr(attribute.Expr, &resourceTags, &tflint.EvaluateExprOption{WantType: &wantType})
+				value, _ := attribute.Expr.Value(&hcl.EvalContext{})
+
+				wantType := cty.DynamicPseudoType
+
+				runner.EvaluateExpr(attribute.Expr, &value, &tflint.EvaluateExprOption{WantType: &wantType})
 				err = runner.EnsureNoError(err, func() error {
-					r.emitIssue(runner, resourceTags, config, attribute.Expr.Range())
+					r.emitIssue(runner, value, config, attribute.Expr.Range())
 					return nil
 				})
 				if err != nil {
@@ -89,24 +90,34 @@ func (r *AzurermResourceMissingTagsRule) Check(runner tflint.Runner) error {
 				}
 			} else {
 				logger.Debug("Walk `%s` resource", resource.Labels[0]+"."+resource.Labels[1])
-				r.emitIssue(runner, map[string]string{}, config, resource.DefRange)
+				r.emitIssue(runner, cty.NilVal, config, resource.DefRange)
 			}
 		}
 	}
 	return nil
 }
 
-func (r *AzurermResourceMissingTagsRule) emitIssue(runner tflint.Runner, tags map[string]string, config azurermResourceTagsRuleConfig, location hcl.Range) {
-	var missing []string
-	for _, tag := range config.Tags {
-		if _, ok := tags[tag]; !ok {
-			missing = append(missing, fmt.Sprintf("\"%s\"", tag))
-		}
+func (r *AzurermResourceMissingTagsRule) emitIssue(runner tflint.Runner, tags cty.Value, config azurermResourceTagsRuleConfig, location hcl.Range) {
+	if tags.IsNull() {
+		wantedString := strings.Join(config.Tags, ", ")
+		issue := fmt.Sprintf("The resource is missing the following tags: %s.", wantedString)
+		runner.EmitIssue(r, issue, location)
+		return
 	}
+
+	mapValue := tags.AsValueMap()
+	emptyMissing := make(map[string]struct{})
+	tagsAlreadyIncluded := make(map[string]struct{})
+
+	missing := evaluateMissingTags(mapValue, config, emptyMissing, tagsAlreadyIncluded)
+
 	if len(missing) > 0 {
-		sort.Strings(missing)
-		wanted := strings.Join(missing, ", ")
-		issue := fmt.Sprintf("The resource is missing the following tags: %s.", wanted)
+		wanted := make([]string, 0, len(missing))
+		for tag := range missing {
+			wanted = append(wanted, tag)
+		}
+		wantedString := strings.Join(wanted, ", ")
+		issue := fmt.Sprintf("The resource is missing the following tags: %s.", wantedString)
 		runner.EmitIssue(r, issue, location)
 	}
 }
@@ -118,4 +129,37 @@ func stringInSlice(a string, list []string) bool {
 		}
 	}
 	return false
+}
+
+func evaluateMissingTags(mapValue map[string]cty.Value, config azurermResourceTagsRuleConfig, missing map[string]struct{}, tagsAlreadyIncluded map[string]struct{}) map[string]struct{} {
+	for _, requiredTag := range config.Tags {
+		for tagName, attributeValue := range mapValue {
+			if attributeValue.Type().IsObjectType() {
+				// recursively go one level deeper as this is a nested tag
+				var nestedMissingTags map[string]struct{}
+				nestedMissingTags = evaluateMissingTags(attributeValue.AsValueMap(), config, missing, tagsAlreadyIncluded)
+				maps.Copy(nestedMissingTags, missing)
+			} else if attributeValue.Type().IsPrimitiveType() {
+				// the value is a string, number or bool so don't go one level deeper
+				// evaluate if the tag matches any of the required tags
+				if tagName == requiredTag {
+					delete(missing, tagName)
+					tagsAlreadyIncluded[tagName] = struct{}{}
+					// the tag name is included in the required strings, skip to the next required tag
+					continue
+				}
+
+				// check that the tag name is not included in all the tags on the map
+				_, tagNameIncludedAtThisLayer := mapValue[requiredTag]
+				// check that the tag name is not included at a different layer
+				_, tagNameIncludedAtDifferentLayer := tagsAlreadyIncluded[requiredTag]
+				if !tagNameIncludedAtThisLayer && !tagNameIncludedAtDifferentLayer {
+					// append the tag as missing
+					missing[requiredTag] = struct{}{}
+					// the required tag is missing so skip to the next required tag
+				}
+			}
+		}
+	}
+	return missing
 }
