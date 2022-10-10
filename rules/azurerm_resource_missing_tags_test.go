@@ -29,7 +29,7 @@ func Test_AzurermResourceMissingTags(t *testing.T) {
 			Expected: helper.Issues{
 				{
 					Rule:    NewAzurermResourceMissingTagsRule(),
-					Message: "The resource is missing the following tags: Foo, Bar.",
+					Message: "The resource is missing the following tags: Bar, Foo.",
 					Range: hcl.Range{
 						Filename: "module.tf",
 						Start:    hcl.Pos{Line: 2, Column: 3},
@@ -57,7 +57,7 @@ func Test_AzurermResourceMissingTags(t *testing.T) {
 			Expected: helper.Issues{
 				{
 					Rule:    NewAzurermResourceMissingTagsRule(),
-					Message: "The resource is missing the following tags: Foo, Bar.",
+					Message: "The resource is missing the following tags: Bar, Foo.",
 					Range: hcl.Range{
 						Filename: "module.tf",
 						Start:    hcl.Pos{Line: 5, Column: 12},
@@ -81,7 +81,7 @@ func Test_AzurermResourceMissingTags(t *testing.T) {
 			Expected: helper.Issues{
 				{
 					Rule:    NewAzurermResourceMissingTagsRule(),
-					Message: "The resource is missing the following tags: Foo, Bar.",
+					Message: "The resource is missing the following tags: Bar, Foo.",
 					Range: hcl.Range{
 						Filename: "module.tf",
 						Start:    hcl.Pos{Line: 2, Column: 3},

@@ -4,6 +4,7 @@ package rules
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	hcl "github.com/hashicorp/hcl/v2"
@@ -99,6 +100,7 @@ func (r *AzurermResourceMissingTagsRule) Check(runner tflint.Runner) error {
 
 func (r *AzurermResourceMissingTagsRule) emitIssue(runner tflint.Runner, tags cty.Value, config azurermResourceTagsRuleConfig, location hcl.Range) {
 	if tags.IsNull() {
+		sort.Strings(config.Tags)
 		wantedString := strings.Join(config.Tags, ", ")
 		issue := fmt.Sprintf("The resource is missing the following tags: %s.", wantedString)
 		runner.EmitIssue(r, issue, location)
@@ -116,6 +118,7 @@ func (r *AzurermResourceMissingTagsRule) emitIssue(runner tflint.Runner, tags ct
 		for tag := range missing {
 			wanted = append(wanted, tag)
 		}
+		sort.Strings(wanted)
 		wantedString := strings.Join(wanted, ", ")
 		issue := fmt.Sprintf("The resource is missing the following tags: %s.", wantedString)
 		runner.EmitIssue(r, issue, location)
